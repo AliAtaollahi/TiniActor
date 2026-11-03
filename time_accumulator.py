@@ -25,7 +25,11 @@ def accumulate_time(lts: LTS) -> LTS:
     """Replace maximal acyclic time-only paths with their total duration.
 
     A path starts at the initial state or immediately after a non-time action,
-    and ends at a state without an outgoing time transition. All non-time
+    and ends at a state without an outgoing time transition. An accumulated
+    transition is emitted to the end of the path and also to every state on
+    it where a non-time action is enabled: after weak-trace determinisation a
+    state can both offer an action and let time pass (two merged branches),
+    and its actions must stay reachable. All non-time
     transitions are retained in input order, followed by accumulated paths in
     discovery order. Cyclic time-only paths have no finite terminal duration
     and are therefore not emitted.
@@ -35,12 +39,14 @@ def accumulate_time(lts: LTS) -> LTS:
     time_in_count: dict[int, int] = defaultdict(int)
     non_time_predecessors: dict[int, list[int]] = defaultdict(list)
     non_time_transitions: list[tuple[int, str, int]] = []
+    non_time_sources: set[int] = set()
 
     for source, label, target in lts.transitions:
         increment = time_increment(label)
         if increment is None:
             non_time_transitions.append((source, label, target))
             non_time_predecessors[target].append(source)
+            non_time_sources.add(source)
         else:
             time_out[source].append((increment, target))
             time_in_count[target] += 1
@@ -81,12 +87,17 @@ def accumulate_time(lts: LTS) -> LTS:
         visited: frozenset[int],
     ) -> None:
         outgoing = time_out.get(state, [])
-        if not outgoing:
+        # Emit the accumulated step where the path ends, and also at every
+        # state on it where a non-time action is enabled: after weak-trace
+        # determinisation such a state may also let time pass (another
+        # branch), and without this edge its actions would be unreachable.
+        if not outgoing or state in non_time_sources:
             identity = (start, total, state)
             if state != start and identity not in seen_accumulated:
                 seen_accumulated.add(identity)
                 accumulated.append((start, f"time +={total}", state))
-            return
+            if not outgoing:
+                return
         for increment, target in outgoing:
             if target not in visited:
                 follow(start, target, total + increment, visited | {target})
